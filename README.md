@@ -36,7 +36,7 @@ Combine un modèle XGBoost entraîné sur 2 ans de données avec des indicateurs
 
 ## 🖼️ Aperçu
 
-![Screenshot du Bitcoin Dashboard](https://raw.githubusercontent.com/KinSushi/bitcoin-dashboard/main/screenshot.jpg)
+![Screenshot du Bitcoin Dashboard](https://raw.githubusercontent.com/KinSushi/bitcoin-dashboard/main/screenshot.JPG)
 
 ## 🧱 Architecture
 
