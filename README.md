@@ -1,6 +1,6 @@
 ﻿---
 title: Bitcoin Dashboard
-emoji: ₿
+emoji: 📈
 colorFrom: yellow
 colorTo: orange
 sdk: streamlit
