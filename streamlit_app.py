@@ -102,21 +102,46 @@ col1.metric("💰 BTC", f"${current:,.2f}")
 col2.metric("📈 4H Δ", f"{current-prev:+.2f}", f"{(current-prev)/prev:+.2%}")
 
 # =========================
-# MARKET STATE
+# MARKET STATE (amélioré)
 # =========================
 regime, vol, drift = market_regime(data)
-regime_label = {
-    "LOW_VOL": "🟢 LOW VOL",
-    "MID_VOL": "🟠 MID VOL",
-    "HIGH_VOL": "🔴 HIGH VOL",
-    "UNKNOWN": "⚪ UNKNOWN"
-}.get(regime, "⚪ UNKNOWN")
+
+# Jauge de volatilité (échelle 0 à 0.03 max)
+vol_pct = min(vol / 0.03, 1.0)  # normalisé pour la barre
+
+if regime == "LOW_VOL":
+    regime_emoji = "🟢"
+    regime_text = "faible"
+    vol_color = "#00c853"
+elif regime == "MID_VOL":
+    regime_emoji = "🟠"
+    regime_text = "moyenne"
+    vol_color = "#ff9800"
+else:
+    regime_emoji = "🔴"
+    regime_text = "élevée"
+    vol_color = "#ff1744"
+
+# Drift formatté
+drift_display = f"{drift:+.6f}"  # garde le signe +/-
+drift_emoji = "📈" if drift > 0 else "📉" if drift < 0 else "➖"
 
 st.subheader("🧭 Market State")
-cr1, cr2, cr3 = st.columns(3)
-cr1.metric("Regime", regime_label)
-cr2.metric("Volatility", f"{vol:.5f}")
-cr3.metric("Drift", f"{drift:.6f}")
+
+colA, colB, colC = st.columns(3)
+
+with colA:
+    st.metric("Régime", f"{regime_emoji} {regime_text}")
+    st.caption("Volatilité normalisée")
+    st.progress(vol_pct)
+
+with colB:
+    st.metric("Volatilité", f"{vol:.5f}")
+    st.caption("Écart-type des rendements 4h")
+
+with colC:
+    st.metric("Tendance (drift)", f"{drift_emoji} {drift_display}")
+    st.caption("Rendement moyen sur la période")
 
 # =========================
 # PREDICTION (safe init)
@@ -136,6 +161,22 @@ else:
     proba = raw_proba
 proba = min(max(proba, 0.0), 1.0)
 
+# ----- Calcul précoce du signal et de la projection -----
+regime_factor = {"LOW_VOL": 1.05, "MID_VOL": 1.0, "HIGH_VOL": 0.85}.get(regime, 1.0)
+drift_norm = np.tanh(drift * 50)
+signal_score = (raw_proba - 0.5) * 2 * 0.7 * regime_factor + drift_norm * 0.3
+
+returns = data["close"].pct_change().dropna()
+if len(returns) > 0:
+    drift_proj = returns.mean()
+    vol_proj = returns.std()
+    expected_move = drift_proj + vol_proj * np.sign(signal_score)
+else:
+    expected_move = 0.0
+projected = current * (1 + expected_move)
+# --------------------------------------------------------
+
+# Historique
 st.session_state.history.append({
     "time": datetime.now().strftime("%H:%M:%S"),
     "label": label,
@@ -145,13 +186,16 @@ st.session_state.history.append({
 })
 st.session_state.history = st.session_state.history[-10:]
 
+# Bloc prédiction + prix projeté dans la colonne 3
 with col3:
     st.markdown("### 🔮 Prediction")
     color = "#00c853" if label == "UP" else "#ff1744"
     st.markdown(f"**<span style='color:{color};font-size:1.4em;'>{label}</span>**", unsafe_allow_html=True)
     progress_val = min(max(int(proba * 100), 0), 100)
     st.progress(progress_val)
-    st.caption(f"Confidence: {proba:.1%}")
+    st.caption(f"Confiance : {proba:.1%}")
+    # ---- AJOUT DU PRIX PROJETÉ ----
+    st.metric("🎯 Prix projeté", f"${projected:,.2f}")
 
 # =========================
 # SIGNAL SCORE & DECISION
@@ -205,13 +249,39 @@ st.session_state.equity = st.session_state.equity[-100:]
 st.session_state.prev_price = current
 
 # =========================
-# DECISION PANEL
+# DECISION PANEL (amélioré)
 # =========================
 st.subheader("🧭 Decision Engine")
+
+# Score visuel (normalisé entre 0 et 1 pour la jauge)
+score_display = (signal_score + 1) / 2  # signal_score entre -1 et 1 → 0 à 1
+score_color = "#00c853" if signal_score > 0.25 else "#ff9800" if signal_score > -0.25 else "#ff1744"
+
 d1, d2, d3 = st.columns(3)
-d1.metric("Regime", regime)
-d2.metric("Signal Score", f"{signal_score:.3f}")
-d3.metric("Action", decision)
+
+with d1:
+    st.metric("Signal Score", f"{signal_score:.3f}")
+    st.caption("Composite (ML + tendance)")
+    st.progress(min(max(score_display, 0.0), 1.0))
+
+with d2:
+    if decision == "BUY":
+        decision_emoji = "🟢"
+        decision_color = "#00c853"
+    elif decision == "SELL":
+        decision_emoji = "🔴"
+        decision_color = "#ff1744"
+    else:
+        decision_emoji = "⚪"
+        decision_color = "#9e9e9e"
+
+    st.metric("Action", f"{decision_emoji} {decision}")
+    st.caption(f"Confiance ML : {raw_proba:.1%}")
+
+with d3:
+    # Affichage du régime (rappel, mais avec style)
+    st.metric("Régime", f"{regime_emoji} {regime_text}")
+    st.caption(f"Volatilité : {vol:.5f}")
 
 # =========================
 # CHART
