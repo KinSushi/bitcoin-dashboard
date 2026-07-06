@@ -1,0 +1,13 @@
+<<<<<<< HEAD
+﻿streamlit
+yfinance
+pandas
+numpy
+plotly
+ta
+requests
+=======
+altair
+pandas
+streamlit
+>>>>>>> dc7192f06803015c3b69a88609d1e3d2f6ec5f63
