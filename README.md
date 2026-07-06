@@ -1,4 +1,10 @@
 ```
+![Bitcoin Dashboard Banner](https://github.com/KinSushi/bitcoin-dashboard/blob/main/banner.jpg)
+
+# Bitcoin Dashboard
+
+AI-Powered Bitcoin Analytics & Market Intelligence
+
 ---
 title: Bitcoin Dashboard
 emoji: 🚀
