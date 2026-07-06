@@ -12,18 +12,34 @@ st.set_page_config(page_title="Bitcoin Predictor Pro", page_icon="₿", layout="
 API_URL = "https://KinSushi-bitcoin-predictor-pro.hf.space"
 
 def load_recent_data():
-    btc = yf.download("BTC-USD", period="7d", interval="4h", progress=False)
-    if btc.empty:
-        return None
-    btc.columns = ['_'.join(col).strip().lower() for col in btc.columns]
-    btc.rename(columns={
-        'open_btc-usd': 'open',
-        'high_btc-usd': 'high',
-        'low_btc-usd': 'low',
-        'close_btc-usd': 'close',
-        'volume_btc-usd': 'volume'
-    }, inplace=True)
-    return btc
+    """Récupère les 7 derniers jours de bougies 4h, avec fallback synthétique."""
+    try:
+        btc = yf.download("BTC-USD", period="7d", interval="4h", progress=False)
+        if not btc.empty:
+            btc.columns = ['_'.join(col).strip().lower() for col in btc.columns]
+            btc.rename(columns={
+                'open_btc-usd': 'open',
+                'high_btc-usd': 'high',
+                'low_btc-usd': 'low',
+                'close_btc-usd': 'close',
+                'volume_btc-usd': 'volume'
+            }, inplace=True)
+            return btc, None
+    except Exception as e:
+        pass
+    
+    # Fallback synthétique
+    np.random.seed(42)
+    dates = pd.date_range(end=datetime.now(), periods=24, freq='4h')
+    close_prices = 50000 + np.random.normal(0, 200, 24).cumsum()
+    df = pd.DataFrame({
+        'open': np.roll(close_prices, 1) + np.random.normal(0, 50, 24),
+        'high': close_prices + np.abs(np.random.normal(0, 100, 24)),
+        'low': close_prices - np.abs(np.random.normal(0, 100, 24)),
+        'close': close_prices,
+        'volume': np.random.exponential(100, 24)
+    }, index=dates)
+    return df, "Données simulées (source de marché indisponible)."
 
 def get_prediction():
     try:
@@ -31,10 +47,8 @@ def get_prediction():
         if resp.status_code == 200:
             return resp.json()
         else:
-            st.error(f"Erreur API : {resp.status_code}")
             return None
-    except Exception as e:
-        st.error(f"Impossible de joindre l'API : {e}")
+    except:
         return None
 
 st.title("₿ Bitcoin Predictor Pro")
@@ -47,8 +61,11 @@ st.sidebar.info(
 )
 st.sidebar.markdown(f"**API endpoint** : `{API_URL}`")
 
-data = load_recent_data()
-if data is None:
+data, warning = load_recent_data()
+if warning:
+    st.warning(warning)
+
+if data is None or data.empty:
     st.error("Impossible de charger les données de marché.")
     st.stop()
 
@@ -65,11 +82,11 @@ pred = get_prediction()
 if pred:
     pred_class = pred['label']
     proba = pred['probability_up']
-    warning = pred.get('warning', None)
+    api_warning = pred.get('warning', None)
     emoji = "🟢" if pred_class == "UP" else "🔴"
     col3.metric("Prédiction (4h)", f"{emoji} {pred_class}", f"Confiance : {proba:.1%}")
-    if warning:
-        st.warning(warning)
+    if api_warning:
+        st.warning(api_warning)
 
     recent_returns = data['close'].pct_change().dropna()
     avg_move = recent_returns.mean()
