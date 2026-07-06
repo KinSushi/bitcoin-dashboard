@@ -25,40 +25,17 @@ if "prev_price" not in st.session_state:
     st.session_state.prev_price = None
 
 # =========================
-# MULTI-SOURCE DATA (robuste)
+# MULTI-SOURCE DATA (silencieuse, ordre optimisé)
 # =========================
 @st.cache_data(ttl=60)
 def load_recent_data():
     """
-    Essaye de récupérer les bougies 4h BTC/USD depuis plusieurs sources.
-    Ordre : Binance → CoinGecko → Kraken → yfinance → Bybit → Bitstamp.
+    Récupère les bougies 4h BTC/USD depuis plusieurs sources.
+    Ordre : CoinGecko → Kraken → yfinance → Bybit → Bitstamp → Binance.
     En cas d'échec total, utilise un fallback synthétique avec avertissement.
     Retourne (DataFrame, warning_message, source_name).
     """
-    # ---------- 1. Binance ----------
-    try:
-        url = "https://api.binance.com/api/v3/klines"
-        params = {"symbol": "BTCUSDT", "interval": "4h", "limit": 42}
-        r = requests.get(url, params=params, timeout=10)
-        r.raise_for_status()
-        raw = r.json()
-        if not isinstance(raw, list) or len(raw) == 0:
-            raise ValueError("Empty Binance response")
-        df = pd.DataFrame(raw, columns=[
-            "open_time","open","high","low","close","volume",
-            "close_time","quote_volume","count","taker_buy_base","taker_buy_quote","ignore"
-        ])
-        df["open_time"] = pd.to_datetime(df["open_time"], unit="ms")
-        for col in ["open","high","low","close","volume"]:
-            df[col] = pd.to_numeric(df[col], errors="coerce")
-        df = df.set_index("open_time")[["open","high","low","close","volume"]]
-        df = df.dropna()
-        if not df.empty:
-            return df, None, "Binance ✅"
-    except Exception as e:
-        st.caption(f"Binance indisponible : {e}")
-
-    # ---------- 2. CoinGecko ----------
+    # ---------- 1. CoinGecko ----------
     try:
         url = "https://api.coingecko.com/api/v3/coins/bitcoin/ohlc"
         params = {"vs_currency": "usd", "days": 7}
@@ -73,10 +50,10 @@ def load_recent_data():
         df = df.set_index("timestamp")[["open","high","low","close","volume"]]
         if not df.empty:
             return df, None, "CoinGecko ✅"
-    except Exception as e:
-        st.caption(f"CoinGecko indisponible : {e}")
+    except Exception:
+        pass
 
-    # ---------- 3. Kraken ----------
+    # ---------- 2. Kraken ----------
     try:
         url = "https://api.kraken.com/0/public/OHLC"
         params = {"pair": "XBTUSD", "interval": 240}
@@ -95,10 +72,10 @@ def load_recent_data():
         df = df.set_index("time")[["open","high","low","close","volume"]]
         if not df.empty:
             return df, None, "Kraken ✅"
-    except Exception as e:
-        st.caption(f"Kraken indisponible : {e}")
+    except Exception:
+        pass
 
-    # ---------- 4. yfinance ----------
+    # ---------- 3. yfinance ----------
     try:
         ticker = yf.download("BTC-USD", period="7d", interval="4h", progress=False)
         if not ticker.empty:
@@ -107,10 +84,10 @@ def load_recent_data():
             df.index.name = "timestamp"
             if not df.empty:
                 return df, None, "Yahoo Finance ✅"
-    except Exception as e:
-        st.caption(f"yfinance indisponible : {e}")
+    except Exception:
+        pass
 
-    # ---------- 5. Bybit ----------
+    # ---------- 4. Bybit ----------
     try:
         url = "https://api.bybit.com/v5/market/kline"
         params = {
@@ -134,10 +111,10 @@ def load_recent_data():
         df = df.set_index("timestamp")[["open","high","low","close","volume"]].sort_index()
         if not df.empty:
             return df, None, "Bybit ✅"
-    except Exception as e:
-        st.caption(f"Bybit indisponible : {e}")
+    except Exception:
+        pass
 
-    # ---------- 6. Bitstamp ----------
+    # ---------- 5. Bitstamp ----------
     try:
         url = "https://www.bitstamp.net/api/v2/ohlc/btcusd/"
         params = {"step": 14400, "limit": 42}
@@ -156,8 +133,33 @@ def load_recent_data():
         df = df.set_index("timestamp")[["open","high","low","close","volume"]].sort_index()
         if not df.empty:
             return df, None, "Bitstamp ✅"
-    except Exception as e:
-        st.caption(f"Bitstamp indisponible : {e}")
+    except Exception:
+        pass
+
+    # ---------- 6. Binance (dernier recours, souvent bloqué) ----------
+    try:
+        url = "https://api.binance.com/api/v3/klines"
+        params = {"symbol": "BTCUSDT", "interval": "4h", "limit": 42}
+        r = requests.get(url, params=params, timeout=10)
+        if r.status_code == 451:
+            raise Exception("Binance bloqué (451)")
+        r.raise_for_status()
+        raw = r.json()
+        if not isinstance(raw, list) or len(raw) == 0:
+            raise ValueError("Empty Binance response")
+        df = pd.DataFrame(raw, columns=[
+            "open_time","open","high","low","close","volume",
+            "close_time","quote_volume","count","taker_buy_base","taker_buy_quote","ignore"
+        ])
+        df["open_time"] = pd.to_datetime(df["open_time"], unit="ms")
+        for col in ["open","high","low","close","volume"]:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+        df = df.set_index("open_time")[["open","high","low","close","volume"]]
+        df = df.dropna()
+        if not df.empty:
+            return df, None, "Binance ✅"
+    except Exception:
+        pass
 
     # ---------- Fallback synthétique ----------
     np.random.seed(42)
@@ -220,9 +222,6 @@ prev = float(data["close"].iloc[-2])
 col1, col2, col3 = st.columns(3)
 col1.metric("💰 BTC", f"${current:,.2f}")
 col2.metric("📈 4H Δ", f"{current-prev:+.2f}", f"{(current-prev)/prev:+.2%}")
-
-# Afficher la source des données dans la colonne 3 (à côté de la prédiction plus tard)
-# Pour l'instant, on garde la place pour la prédiction
 
 # =========================
 # MARKET STATE (amélioré)
@@ -321,7 +320,6 @@ with col3:
     st.progress(progress_val)
     st.caption(f"Confiance : {proba:.1%}")
     st.metric("🎯 Prix projeté", f"${projected:,.2f}")
-    # Source des données
     st.caption(f"Source : {source_name}")
 
 # =========================
@@ -437,7 +435,6 @@ with col_eq2:
 if st.session_state.history:
     st.subheader("📋 Dernières prédictions")
     hist_df = pd.DataFrame(st.session_state.history)
-    # Mise en forme conditionnelle (couleurs)
     def color_label(val):
         color = 'green' if val == 'UP' else 'red' if val == 'DOWN' else 'gray'
         return f'color: {color}; font-weight: bold'
@@ -449,20 +446,15 @@ if st.session_state.history:
 with st.expander("📊 Indicateurs techniques avancés"):
     tmp = data.copy()
     if not tmp.empty:
-        # RSI
         tmp["rsi"] = ta.momentum.RSIIndicator(tmp["close"]).rsi()
-        # MACD
         macd = ta.trend.MACD(tmp["close"])
         tmp["macd"] = macd.macd()
         tmp["macd_signal"] = macd.macd_signal()
         tmp["macd_diff"] = macd.macd_diff()
-        # ATR
         tmp["atr"] = ta.volatility.AverageTrueRange(tmp["high"], tmp["low"], tmp["close"], window=14).average_true_range()
-        # Bollinger Bands
         bb = ta.volatility.BollingerBands(tmp["close"], window=20, window_dev=2)
         tmp["bb_high"] = bb.bollinger_hband()
         tmp["bb_low"] = bb.bollinger_lband()
-        # StochRSI
         stochrsi = ta.momentum.StochRSIIndicator(tmp["close"])
         tmp["stochrsi"] = stochrsi.stochrsi()
 
