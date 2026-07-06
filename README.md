@@ -38,15 +38,7 @@ Combine un modèle XGBoost entraîné sur 2 ans de données avec des indicateurs
 ## 🧱 Architecture
 
 ```
-Streamlit App (Hugging Face)
-     │
-     │ /predict-live
-     ▼
-FastAPI (ML)  ← XGBoost model
-     ▲
-     │ données 4h
-     │
-Multi‑source (CoinGecko → Kraken → yfinance → Bybit → Bitstamp → Binance)
+Streamlit App ──/predict-live──▶ FastAPI (XGBoost) ◀── Multi‑source (CoinGecko → Kraken → yfinance → Bybit → Bitstamp → Binance)
 ```
 
 ## 🛠️ Stack
