@@ -24,7 +24,7 @@ if "prev_price" not in st.session_state:
     st.session_state.prev_price = None
 
 # =========================
-# BINANCE DATA
+# BINANCE DATA – réel uniquement
 # =========================
 @st.cache_data(ttl=60)
 def load_recent_data():
@@ -48,18 +48,9 @@ def load_recent_data():
         if df.empty:
             raise ValueError("Empty DataFrame")
         return df, None
-    except Exception:
-        np.random.seed(42)
-        dates = pd.date_range(end=datetime.utcnow(), periods=42, freq="4h")
-        close = 50000 + np.random.normal(0, 200, 42).cumsum()
-        df = pd.DataFrame({
-            "open": np.roll(close, 1),
-            "high": close * 1.01,
-            "low": close * 0.99,
-            "close": close,
-            "volume": np.random.exponential(100, 42)
-        }, index=dates)
-        return df, "⚠️ fallback actif"
+    except Exception as e:
+        st.error(f"❌ Impossible de récupérer les données réelles depuis Binance : {e}")
+        st.stop()
 
 # =========================
 # MARKET REGIME
@@ -104,7 +95,7 @@ current = float(data["close"].iloc[-1])
 prev = float(data["close"].iloc[-2])
 
 # =========================
-# METRICS (colonnes correctement réutilisées)
+# METRICS
 # =========================
 col1, col2, col3 = st.columns(3)
 col1.metric("💰 BTC", f"${current:,.2f}")
@@ -128,7 +119,7 @@ cr2.metric("Volatility", f"{vol:.5f}")
 cr3.metric("Drift", f"{drift:.6f}")
 
 # =========================
-# PREDICTION (initialisation safe + traitement)
+# PREDICTION (safe init)
 # =========================
 pred = safe_predict()
 raw_proba = 0.5
@@ -138,7 +129,6 @@ if pred:
     label = pred.get("label", "HOLD")
     raw_proba = float(pred.get("probability_up", 0.5))
 
-# Ajustement volatilité
 if regime in ("MID_VOL", "HIGH_VOL"):
     adjustment = max(0.6, 1 - vol * 10)
     proba = raw_proba * adjustment
@@ -146,7 +136,6 @@ else:
     proba = raw_proba
 proba = min(max(proba, 0.0), 1.0)
 
-# Historique (après calcul final)
 st.session_state.history.append({
     "time": datetime.now().strftime("%H:%M:%S"),
     "label": label,
@@ -156,7 +145,6 @@ st.session_state.history.append({
 })
 st.session_state.history = st.session_state.history[-10:]
 
-# UI prédiction dans la 3ème colonne réservée
 with col3:
     st.markdown("### 🔮 Prediction")
     color = "#00c853" if label == "UP" else "#ff1744"
@@ -166,12 +154,10 @@ with col3:
     st.caption(f"Confidence: {proba:.1%}")
 
 # =========================
-# SIGNAL SCORE & DECISION (score centré, drift normalisé)
+# SIGNAL SCORE & DECISION
 # =========================
 regime_factor = {"LOW_VOL": 1.05, "MID_VOL": 1.0, "HIGH_VOL": 0.85}.get(regime, 1.0)
 drift_norm = np.tanh(drift * 50)
-
-# Score compris entre -1 et 1 environ
 signal_score = (raw_proba - 0.5) * 2 * 0.7 * regime_factor + drift_norm * 0.3
 
 if signal_score > 0.25:
@@ -182,7 +168,7 @@ else:
     decision = "HOLD"
 
 # =========================
-# PROJECTION (réaliste)
+# PROJECTION
 # =========================
 returns = data["close"].pct_change().dropna()
 if len(returns) > 0:
@@ -198,7 +184,7 @@ st.subheader("📈 Projection 4H")
 st.metric("Prix projeté", f"${projected:,.2f}")
 
 # =========================
-# BACKTEST (basé variation réelle de prix, exposition 10%)
+# BACKTEST (exposition 10%)
 # =========================
 prev_equity = st.session_state.equity[-1]
 if st.session_state.prev_price is None:
@@ -228,7 +214,7 @@ d2.metric("Signal Score", f"{signal_score:.3f}")
 d3.metric("Action", decision)
 
 # =========================
-# CHART (chandeliers + volume + projection)
+# CHART
 # =========================
 plot = data.tail(24)
 fig = make_subplots(rows=2, cols=1, shared_xaxes=True,
@@ -263,7 +249,7 @@ fig.update_layout(height=600, template="plotly_white", showlegend=False)
 st.plotly_chart(fig, use_container_width=True)
 
 # =========================
-# EQUITY CURVE + DRAWDOWN
+# EQUITY & RISK
 # =========================
 eq = np.array(st.session_state.equity)
 peak = np.maximum.accumulate(eq)
