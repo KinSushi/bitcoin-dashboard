@@ -1,10 +1,3 @@
-```
-![Bitcoin Dashboard Banner](https://github.com/KinSushi/bitcoin-dashboard/blob/main/banner.jpg)
-
-# Bitcoin Dashboard
-
-AI-Powered Bitcoin Analytics & Market Intelligence
-
 ---
 title: Bitcoin Dashboard
 emoji: 🚀
@@ -15,7 +8,11 @@ app_file: streamlit_app.py
 pinned: false
 ---
 
-# ₿ Bitcoin Predictor Pro
+![Bitcoin Dashboard Banner](https://github.com/KinSushi/bitcoin-dashboard/blob/main/banner.jpg)
+
+# ₿ Bitcoin Dashboard
+
+**AI-Powered Bitcoin Analytics & Market Intelligence**
 
 [![Streamlit](https://img.shields.io/badge/Streamlit-FF4B4B?style=flat&logo=Streamlit&logoColor=white)](https://streamlit.io)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11-blue.svg)](https://www.python.org/downloads/)
