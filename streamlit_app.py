@@ -24,97 +24,245 @@ if "equity" not in st.session_state:
 if "prev_price" not in st.session_state:
     st.session_state.prev_price = None
 
-
 # =========================
-# DATA
+# MULTI-SOURCE DATA (silencieuse, ordre optimisé)
 # =========================
 @st.cache_data(ttl=60)
 def load_recent_data():
+    """
+    Récupère les bougies 4h BTC/USD depuis plusieurs sources.
+    Ordre : CoinGecko → Kraken → yfinance → Bybit → Bitstamp → Binance.
+    En cas d'échec total, utilise un fallback synthétique avec avertissement.
+    Retourne (DataFrame, warning_message, source_name).
+    """
+    # ---------- 1. CoinGecko ----------
     try:
-        df = yf.download("BTC-USD", period="7d", interval="4h", progress=False)
-        if df.empty:
-            raise ValueError()
-        df = df.rename(columns=str.lower)[["open","high","low","close","volume"]]
-        return df, None, "Yahoo Finance"
+        url = "https://api.coingecko.com/api/v3/coins/bitcoin/ohlc"
+        params = {"vs_currency": "usd", "days": 7}
+        r = requests.get(url, params=params, timeout=10)
+        r.raise_for_status()
+        raw = r.json()
+        if not isinstance(raw, list) or len(raw) == 0:
+            raise ValueError("Empty CoinGecko response")
+        df = pd.DataFrame(raw, columns=["timestamp","open","high","low","close"])
+        df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms")
+        df["volume"] = 100.0  # CoinGecko ne fournit pas le volume
+        df = df.set_index("timestamp")[["open","high","low","close","volume"]]
+        if not df.empty:
+            return df, None, "CoinGecko ✅"
     except Exception:
-        np.random.seed(42)
-        dates = pd.date_range(end=datetime.utcnow(), periods=42, freq="4h")
-        close = 50000 + np.random.normal(0, 200, 42).cumsum()
-        df = pd.DataFrame({
-            "open": np.roll(close, 1),
-            "high": close * 1.01,
-            "low": close * 0.99,
-            "close": close,
-            "volume": np.random.exponential(100, 42)
-        }, index=dates)
-        return df, "fallback actif", "SIMULATION"
+        pass
 
+    # ---------- 2. Kraken ----------
+    try:
+        url = "https://api.kraken.com/0/public/OHLC"
+        params = {"pair": "XBTUSD", "interval": 240}
+        r = requests.get(url, params=params, timeout=10)
+        r.raise_for_status()
+        raw = r.json()
+        if "result" not in raw or "XBTUSD" not in raw["result"]:
+            raise ValueError("Invalid Kraken response")
+        ohlc = raw["result"]["XBTUSD"]
+        if not ohlc:
+            raise ValueError("Empty Kraken data")
+        df = pd.DataFrame(ohlc, columns=["time","open","high","low","close","vwap","volume","count"])
+        df["time"] = pd.to_datetime(df["time"], unit="s")
+        for col in ["open","high","low","close","volume"]:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+        df = df.set_index("time")[["open","high","low","close","volume"]]
+        if not df.empty:
+            return df, None, "Kraken ✅"
+    except Exception:
+        pass
+
+    # ---------- 3. yfinance ----------
+    try:
+        ticker = yf.download("BTC-USD", period="7d", interval="4h", progress=False)
+        if not ticker.empty:
+            ticker.columns = [c.lower() for c in ticker.columns]
+            df = ticker[["open","high","low","close","volume"]].copy()
+            df.index.name = "timestamp"
+            if not df.empty:
+                return df, None, "Yahoo Finance ✅"
+    except Exception:
+        pass
+
+    # ---------- 4. Bybit ----------
+    try:
+        url = "https://api.bybit.com/v5/market/kline"
+        params = {
+            "category": "spot",
+            "symbol": "BTCUSDT",
+            "interval": "240",
+            "limit": 42
+        }
+        r = requests.get(url, params=params, timeout=10)
+        r.raise_for_status()
+        raw = r.json()
+        if raw.get("retCode") != 0 or "result" not in raw or "list" not in raw["result"]:
+            raise ValueError("Invalid Bybit response")
+        ohlc = raw["result"]["list"]
+        if not ohlc:
+            raise ValueError("Empty Bybit data")
+        df = pd.DataFrame(ohlc, columns=["timestamp","open","high","low","close","volume","turnover"])
+        df["timestamp"] = pd.to_datetime(df["timestamp"].astype(float), unit="ms")
+        for col in ["open","high","low","close","volume"]:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+        df = df.set_index("timestamp")[["open","high","low","close","volume"]].sort_index()
+        if not df.empty:
+            return df, None, "Bybit ✅"
+    except Exception:
+        pass
+
+    # ---------- 5. Bitstamp ----------
+    try:
+        url = "https://www.bitstamp.net/api/v2/ohlc/btcusd/"
+        params = {"step": 14400, "limit": 42}
+        r = requests.get(url, params=params, timeout=10)
+        r.raise_for_status()
+        raw = r.json()
+        if "data" not in raw or "ohlc" not in raw["data"]:
+            raise ValueError("Invalid Bitstamp response")
+        ohlc = raw["data"]["ohlc"]
+        if not ohlc:
+            raise ValueError("Empty Bitstamp data")
+        df = pd.DataFrame(ohlc, columns=["timestamp","open","high","low","close","volume"])
+        df["timestamp"] = pd.to_datetime(df["timestamp"].astype(float), unit="s")
+        for col in ["open","high","low","close","volume"]:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+        df = df.set_index("timestamp")[["open","high","low","close","volume"]].sort_index()
+        if not df.empty:
+            return df, None, "Bitstamp ✅"
+    except Exception:
+        pass
+
+    # ---------- 6. Binance (dernier recours, souvent bloqué) ----------
+    try:
+        url = "https://api.binance.com/api/v3/klines"
+        params = {"symbol": "BTCUSDT", "interval": "4h", "limit": 42}
+        r = requests.get(url, params=params, timeout=10)
+        if r.status_code == 451:
+            raise Exception("Binance bloqué (451)")
+        r.raise_for_status()
+        raw = r.json()
+        if not isinstance(raw, list) or len(raw) == 0:
+            raise ValueError("Empty Binance response")
+        df = pd.DataFrame(raw, columns=[
+            "open_time","open","high","low","close","volume",
+            "close_time","quote_volume","count","taker_buy_base","taker_buy_quote","ignore"
+        ])
+        df["open_time"] = pd.to_datetime(df["open_time"], unit="ms")
+        for col in ["open","high","low","close","volume"]:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+        df = df.set_index("open_time")[["open","high","low","close","volume"]]
+        df = df.dropna()
+        if not df.empty:
+            return df, None, "Binance ✅"
+    except Exception:
+        pass
+
+    # ---------- Fallback synthétique ----------
+    np.random.seed(42)
+    dates = pd.date_range(end=datetime.utcnow(), periods=42, freq="4h")
+    close = 50000 + np.random.normal(0, 200, 42).cumsum()
+    df = pd.DataFrame({
+        "open": np.roll(close, 1),
+        "high": close * 1.01,
+        "low": close * 0.99,
+        "close": close,
+        "volume": np.random.exponential(100, 42)
+    }, index=dates)
+    return df, "⚠️ Données simulées – Aucune source de données réelle disponible", "Fallback 🔄"
 
 # =========================
-# REGIME
+# MARKET REGIME
 # =========================
 def market_regime(df):
     r = df["close"].pct_change().dropna()
-    vol = r.std() if len(r) else 0
-    drift = r.mean() if len(r) else 0
-
+    if len(r) < 5:
+        return "UNKNOWN", 0.0, 0.0
+    vol = float(r.std())
+    drift = float(r.mean())
     if vol < 0.008:
         regime = "LOW_VOL"
     elif vol < 0.02:
         regime = "MID_VOL"
     else:
         regime = "HIGH_VOL"
-
-    return regime, float(vol), float(drift)
-
+    return regime, vol, drift
 
 # =========================
-# API
+# API SAFE CALL (avec timeout plus long)
 # =========================
 def safe_predict():
     try:
-        r = requests.get(f"{API_URL}/predict-live", timeout=8)
+        r = requests.get(f"{API_URL}/predict-live", timeout=15)
         if r.status_code != 200:
             return None
         j = r.json()
-        return j if "label" in j else None
+        if "label" not in j or "probability_up" not in j:
+            return None
+        return j
     except:
         return None
 
-
 # =========================
-# LOAD
+# LOAD DATA (avec spinner)
 # =========================
-data, warn, source = load_recent_data()
-if warn:
-    st.warning(warn)
+with st.spinner("Chargement des données de marché..."):
+    data, warning, source_name = load_recent_data()
+if warning:
+    st.warning(warning)
 
 current = float(data["close"].iloc[-1])
 prev = float(data["close"].iloc[-2])
 
 # =========================
-# UI TOP
+# METRICS
 # =========================
-c1, c2, c3 = st.columns(3)
-c1.metric("BTC", f"${current:,.2f}")
-c2.metric("Δ 4H", f"{current-prev:+.2f}", f"{(current-prev)/prev:+.2%}")
-
+col1, col2, col3 = st.columns(3)
+col1.metric("💰 BTC", f"${current:,.2f}")
+col2.metric("📈 4H Δ", f"{current-prev:+.2f}", f"{(current-prev)/prev:+.2%}")
 
 # =========================
-# REGIME
+# MARKET STATE (amélioré)
 # =========================
 regime, vol, drift = market_regime(data)
 
-st.subheader("Market State")
+# Jauge de volatilité (échelle 0 à 0.03 max)
+vol_pct = min(vol / 0.03, 1.0)
 
-r1, r2, r3 = st.columns(3)
-r1.metric("Regime", regime)
-r2.metric("Volatility", f"{vol:.5f}")
-r3.metric("Drift", f"{drift:.6f}")
+if regime == "LOW_VOL":
+    regime_emoji = "🟢"
+    regime_text = "faible"
+elif regime == "MID_VOL":
+    regime_emoji = "🟠"
+    regime_text = "moyenne"
+else:
+    regime_emoji = "🔴"
+    regime_text = "élevée"
 
+drift_display = f"{drift:+.6f}"
+drift_emoji = "📈" if drift > 0 else "📉" if drift < 0 else "➖"
+
+st.subheader("🧭 Market State")
+colA, colB, colC = st.columns(3)
+
+with colA:
+    st.metric("Régime", f"{regime_emoji} {regime_text}")
+    st.caption("Volatilité normalisée")
+    st.progress(vol_pct)
+
+with colB:
+    st.metric("Volatilité", f"{vol:.5f}")
+    st.caption("Écart-type des rendements 4h")
+
+with colC:
+    st.metric("Tendance (drift)", f"{drift_emoji} {drift_display}")
+    st.caption("Rendement moyen sur la période")
 
 # =========================
-# PREDICTION
+# PREDICTION (avec calculs unifiés)
 # =========================
 pred = safe_predict()
 raw_proba = 0.5
@@ -124,144 +272,219 @@ if pred:
     label = pred.get("label", "HOLD")
     raw_proba = float(pred.get("probability_up", 0.5))
 
+if regime in ("MID_VOL", "HIGH_VOL"):
+    adjustment = max(0.6, 1 - vol * 10)
+    proba = raw_proba * adjustment
+else:
+    proba = raw_proba
+proba = min(max(proba, 0.0), 1.0)
 
-adjust = max(0.6, 1 - vol * 10) if regime != "LOW_VOL" else 1.0
-proba = np.clip(raw_proba * adjust, 0, 1)
+# ----- Calcul du signal score et de la projection (une seule fois) -----
+regime_factor = {"LOW_VOL": 1.05, "MID_VOL": 1.0, "HIGH_VOL": 0.85}.get(regime, 1.0)
+drift_norm = np.tanh(drift * 50)
+signal_score = (raw_proba - 0.5) * 2 * 0.7 * regime_factor + drift_norm * 0.3
 
+returns = data["close"].pct_change().dropna()
+if len(returns) > 0:
+    drift_proj = returns.mean()
+    vol_proj = returns.std()
+    expected_move = drift_proj + vol_proj * np.sign(signal_score)
+else:
+    expected_move = 0.0
+projected = current * (1 + expected_move)
 
-# =========================
-# SIGNAL SCORE (stable)
-# =========================
-regime_factor = {"LOW_VOL":1.05,"MID_VOL":1.0,"HIGH_VOL":0.85}[regime]
-
-drift_norm = np.tanh(drift * 100)
-
-signal_score = (raw_proba - 0.5) * regime_factor + 0.3 * drift_norm
-
-if signal_score > 0.2:
+# Décision
+if signal_score > 0.25:
     decision = "BUY"
-elif signal_score < -0.2:
+elif signal_score < -0.25:
     decision = "SELL"
 else:
     decision = "HOLD"
 
+# Historique
+st.session_state.history.append({
+    "time": datetime.now().strftime("%H:%M:%S"),
+    "label": label,
+    "confidence": round(proba, 3),
+    "price": current,
+    "regime": regime,
+    "source": source_name
+})
+st.session_state.history = st.session_state.history[-10:]
+
+# Bloc prédiction + prix projeté dans la colonne 3
+with col3:
+    st.markdown("### 🔮 Prediction")
+    color = "#00c853" if label == "UP" else "#ff1744"
+    st.markdown(f"**<span style='color:{color};font-size:1.4em;'>{label}</span>**", unsafe_allow_html=True)
+    progress_val = min(max(int(proba * 100), 0), 100)
+    st.progress(progress_val)
+    st.caption(f"Confiance : {proba:.1%}")
+    st.metric("🎯 Prix projeté", f"${projected:,.2f}")
+    st.caption(f"Source : {source_name}")
 
 # =========================
-# PROJECTION (FIXED SIGN BUG)
+# BACKTEST (exposition 10%)
 # =========================
-returns = data["close"].pct_change().dropna()
-
-if len(returns):
-    expected_move = returns.mean() + returns.std() * (1 if signal_score > 0 else -1)
-else:
-    expected_move = 0
-
-projected = current * (1 + expected_move)
-
-
-# =========================
-# BACKTEST (stable)
-# =========================
-equity = st.session_state.equity[-1]
-exposure = 0.1
-
+prev_equity = st.session_state.equity[-1]
 if st.session_state.prev_price is None:
     st.session_state.prev_price = prev
 
-price_delta = (current - st.session_state.prev_price) / st.session_state.prev_price
+price_change = (current - st.session_state.prev_price) / st.session_state.prev_price
 
 pnl = 0
 if decision == "BUY":
-    pnl = equity * exposure * price_delta
+    pnl = prev_equity * 0.1 * price_change
 elif decision == "SELL":
-    pnl = -equity * exposure * price_delta
+    pnl = -prev_equity * 0.1 * price_change
 
-equity += pnl
-st.session_state.equity.append(equity)
+new_equity = prev_equity + pnl
+st.session_state.equity.append(new_equity)
+st.session_state.equity = st.session_state.equity[-100:]
+
 st.session_state.prev_price = current
 
-
 # =========================
-# UI PREDICTION (NO HTML)
+# DECISION PANEL (amélioré)
 # =========================
-st.subheader("Prediction")
+st.subheader("🧭 Decision Engine")
 
-colA, colB, colC = st.columns(3)
-
-colA.metric("Signal", label)
-colB.progress(int(proba * 100))
-colC.metric("Confidence", f"{proba:.1%}")
-
-
-# =========================
-# DECISION
-# =========================
-st.subheader("Decision Engine")
+score_display = (signal_score + 1) / 2
 
 d1, d2, d3 = st.columns(3)
-d1.metric("Signal Score", f"{signal_score:.3f}")
-d2.metric("Action", decision)
-d3.metric("Projection", f"${projected:,.2f}")
 
+with d1:
+    st.metric("Signal Score", f"{signal_score:.3f}")
+    st.caption("Composite (ML + tendance)")
+    st.progress(min(max(score_display, 0.0), 1.0))
+
+with d2:
+    if decision == "BUY":
+        decision_emoji = "🟢"
+    elif decision == "SELL":
+        decision_emoji = "🔴"
+    else:
+        decision_emoji = "⚪"
+    st.metric("Action", f"{decision_emoji} {decision}")
+    st.caption(f"Confiance ML : {raw_proba:.1%}")
+
+with d3:
+    st.metric("Régime", f"{regime_emoji} {regime_text}")
+    st.caption(f"Volatilité : {vol:.5f}")
 
 # =========================
-# CHART
+# CHART (chandeliers + volume + projection)
 # =========================
 plot = data.tail(24)
-
-fig = make_subplots(rows=2, cols=1, shared_xaxes=True)
+fig = make_subplots(rows=2, cols=1, shared_xaxes=True,
+                    row_heights=[0.7, 0.3], vertical_spacing=0.05)
 
 fig.add_trace(go.Candlestick(
     x=plot.index,
     open=plot["open"],
     high=plot["high"],
     low=plot["low"],
-    close=plot["close"]
+    close=plot["close"],
+    name="BTC/USD"
 ), row=1, col=1)
 
+colors = np.where(plot["close"] >= plot["open"], "green", "red")
 fig.add_trace(go.Bar(
     x=plot.index,
-    y=plot["volume"]
+    y=plot["volume"],
+    marker_color=colors,
+    name="Volume"
 ), row=2, col=1)
 
 fig.add_trace(go.Scatter(
     x=[plot.index[-1], plot.index[-1] + timedelta(hours=4)],
     y=[current, projected],
-    mode="lines"
+    mode="lines+markers",
+    line=dict(color="orange", dash="dot"),
+    name="Projection"
 ), row=1, col=1)
 
-fig.update_layout(height=600, template="plotly_white")
+fig.update_layout(height=600, template="plotly_white", showlegend=False)
 st.plotly_chart(fig, use_container_width=True)
 
+# =========================
+# EQUITY & RISK
+# =========================
+eq = np.array(st.session_state.equity)
+peak = np.maximum.accumulate(eq)
+drawdown = np.zeros_like(eq)
+valid = peak != 0
+drawdown[valid] = (eq[valid] - peak[valid]) / peak[valid]
+max_dd = np.min(drawdown[valid]) if np.any(valid) else 0.0
+
+col_eq1, col_eq2 = st.columns(2)
+with col_eq1:
+    st.subheader("📈 Equity Curve")
+    fig_eq = go.Figure()
+    fig_eq.add_trace(go.Scatter(y=eq, mode="lines", line=dict(color="blue")))
+    fig_eq.update_layout(height=300, template="plotly_white", showlegend=False)
+    st.plotly_chart(fig_eq, use_container_width=True)
+
+with col_eq2:
+    st.subheader("📉 Risk Metrics")
+    st.metric("Max Drawdown", f"{max_dd:.2%}")
+    st.metric("Current Equity", f"${eq[-1]:.2f}")
 
 # =========================
-# EQUITY
+# HISTORY (corrigé avec pandas map au lieu de applymap)
 # =========================
-st.subheader("Equity")
-st.line_chart(st.session_state.equity)
-
-
-# =========================
-# HISTORY SAFE
-# =========================
-st.session_state.history.append({
-    "time": datetime.now().strftime("%H:%M:%S"),
-    "label": label,
-    "confidence": float(proba),
-    "price": current,
-    "regime": regime
-})
-
-st.dataframe(pd.DataFrame(st.session_state.history[-10:]))
-
+if st.session_state.history:
+    st.subheader("📋 Dernières prédictions")
+    hist_df = pd.DataFrame(st.session_state.history)
+    # Style conditionnel : colorer la colonne 'label'
+    def color_label(val):
+        color = 'green' if val == 'UP' else 'red' if val == 'DOWN' else 'gray'
+        return f'color: {color}; font-weight: bold'
+    styled_df = hist_df.style.map(color_label, subset=['label'])
+    st.dataframe(styled_df, use_container_width=True)
 
 # =========================
-# INDICATORS
+# INDICATORS (ajout ATR, StochRSI, etc.)
 # =========================
-with st.expander("Indicators"):
+with st.expander("📊 Indicateurs techniques avancés"):
     tmp = data.copy()
-    tmp["rsi"] = ta.momentum.RSIIndicator(tmp["close"]).rsi()
-    macd = ta.trend.MACD(tmp["close"])
-    tmp["macd"] = macd.macd()
+    if not tmp.empty:
+        tmp["rsi"] = ta.momentum.RSIIndicator(tmp["close"]).rsi()
+        macd = ta.trend.MACD(tmp["close"])
+        tmp["macd"] = macd.macd()
+        tmp["macd_signal"] = macd.macd_signal()
+        tmp["macd_diff"] = macd.macd_diff()
+        tmp["atr"] = ta.volatility.AverageTrueRange(tmp["high"], tmp["low"], tmp["close"], window=14).average_true_range()
+        bb = ta.volatility.BollingerBands(tmp["close"], window=20, window_dev=2)
+        tmp["bb_high"] = bb.bollinger_hband()
+        tmp["bb_low"] = bb.bollinger_lband()
+        stochrsi = ta.momentum.StochRSIIndicator(tmp["close"])
+        tmp["stochrsi"] = stochrsi.stochrsi()
 
-    st.dataframe(tmp.tail(1))
+        latest = tmp.iloc[-1]
+        indicators = {
+            "RSI": latest["rsi"],
+            "MACD": latest["macd"],
+            "Signal MACD": latest["macd_signal"],
+            "MACD Diff": latest["macd_diff"],
+            "ATR": latest["atr"],
+            "BB High": latest["bb_high"],
+            "BB Low": latest["bb_low"],
+            "StochRSI": latest["stochrsi"]
+        }
+        st.dataframe(pd.DataFrame(indicators, index=["Valeur"]).T.style.format("{:.4f}"))
+    else:
+        st.write("Données insuffisantes")
+
+# =========================
+# STATUT API ET RAFRAÎCHISSEMENT
+# =========================
+with st.sidebar:
+    st.markdown("---")
+    st.subheader("🔌 Statut")
+    st.write(f"API : {'🟢 connectée' if pred else '🔴 hors ligne'}")
+    st.write(f"Source données : {source_name}")
+    st.write(f"Dernière mise à jour : {datetime.utcnow().strftime('%H:%M:%S UTC')}")
+    if st.button("🔄 Rafraîchir les données"):
+        st.cache_data.clear()
+        st.rerun()
