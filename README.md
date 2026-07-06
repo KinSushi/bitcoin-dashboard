@@ -138,5 +138,3 @@ Développé par **KinSushi** — [GitHub](https://github.com/KinSushi)
 
 APACHE 2.0 © 2026 KinSushi
 ```
-
----
