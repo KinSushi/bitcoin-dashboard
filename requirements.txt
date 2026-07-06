@@ -1,5 +1,3 @@
-<<<<<<< HEAD
-<<<<<<< HEAD
 ﻿streamlit
 yfinance
 pandas
@@ -7,13 +5,3 @@ numpy
 plotly
 ta
 requests
-=======
-altair
-pandas
-streamlit
->>>>>>> dc7192f06803015c3b69a88609d1e3d2f6ec5f63
-=======
-altair
-pandas
-streamlit
->>>>>>> 0e38c9eca1b621b9c66386d557231edd37f723ba
