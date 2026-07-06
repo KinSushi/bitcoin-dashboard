@@ -1,7 +1,3 @@
----
-
-## 📝 README
-
 ```
 ---
 title: Bitcoin Dashboard
@@ -143,3 +139,4 @@ APACHE 2.0 © 2026 KinSushi
 git add README.md
 git commit -m "Correction en-tête YAML et badges"
 git push origin main
+```
