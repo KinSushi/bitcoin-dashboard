@@ -192,11 +192,11 @@ def market_regime(df):
     return regime, vol, drift
 
 # =========================
-# API SAFE CALL
+# API SAFE CALL (avec timeout plus long)
 # =========================
 def safe_predict():
     try:
-        r = requests.get(f"{API_URL}/predict-live", timeout=10)
+        r = requests.get(f"{API_URL}/predict-live", timeout=15)
         if r.status_code != 200:
             return None
         j = r.json()
@@ -207,9 +207,10 @@ def safe_predict():
         return None
 
 # =========================
-# LOAD DATA
+# LOAD DATA (avec spinner)
 # =========================
-data, warning, source_name = load_recent_data()
+with st.spinner("Chargement des données de marché..."):
+    data, warning, source_name = load_recent_data()
 if warning:
     st.warning(warning)
 
@@ -430,15 +431,17 @@ with col_eq2:
     st.metric("Current Equity", f"${eq[-1]:.2f}")
 
 # =========================
-# HISTORY (enrichi)
+# HISTORY (corrigé avec pandas map au lieu de applymap)
 # =========================
 if st.session_state.history:
     st.subheader("📋 Dernières prédictions")
     hist_df = pd.DataFrame(st.session_state.history)
+    # Style conditionnel : colorer la colonne 'label'
     def color_label(val):
         color = 'green' if val == 'UP' else 'red' if val == 'DOWN' else 'gray'
         return f'color: {color}; font-weight: bold'
-    st.dataframe(hist_df.style.applymap(color_label, subset=['label']), use_container_width=True)
+    styled_df = hist_df.style.map(color_label, subset=['label'])
+    st.dataframe(styled_df, use_container_width=True)
 
 # =========================
 # INDICATORS (ajout ATR, StochRSI, etc.)
