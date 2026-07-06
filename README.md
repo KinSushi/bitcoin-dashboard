@@ -1,14 +1,15 @@
 ---
-title: Streamlit Template Space
+title: Bitcoin Dashboard
 emoji: 🚀
 colorFrom: red
 colorTo: red
 sdk: docker
 app_port: 8501
 tags:
-  - streamlit
+- streamlit
 pinned: false
-short_description: Streamlit template space
+short_description: bitcoin prediction
+license: apache-2.0
 ---
 
 # Welcome to Streamlit!
